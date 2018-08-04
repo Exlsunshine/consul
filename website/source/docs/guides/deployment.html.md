@@ -75,11 +75,9 @@ LAN gossip occurs between all agents in a single datacenter with each agent send
 
 The agent's status directly affects the service discovery results. If an agent is down, the services it is monitoring will also be marked as down.
 
-In addition, the agent also periodically performs a full state sync over TCP which gossips each agent’s understanding of the member list around it (node names, IP addresses, and health status). These operations are expensive relative to the standard gossip protocol mentioned above and are synced every 30 seconds. For more details, refer to [Serf Gossip docs](https://www.serf.io/docs/internals/gossip.html)
+In addition, the agent also periodically performs a full state sync over TCP which gossips each agent’s understanding of the member list around it (node names, IP addresses, and health status). These operations are expensive relative to the standard gossip protocol mentioned above and are synced at a rate determined by cluster size to keep overhead low. It's typically between 30 seconds and 5 minutes. For more details, refer to [Serf Gossip docs](https://www.serf.io/docs/internals/gossip.html)
 
-Datacenter designs may opt for a layer 2 or a layer 3 network. Consul’s gossip protocol uses UDP probes initially to detect the health of its peers. In layer 2 networks, the ARP request will be forwarded to all the devices. If you are running a fairly large cluster (i.e. multi-thousand node Consul cluster), this may create some congestion as the gossip probe request for the nodes is sent approximately once per second. This can be improved by increasing the host ARP table size and ARP cache expiration timer.
-
-Layer 3 restricts the ARP requests to a smaller segment of the network. Traffic between the segments typically traverses through a firewall and/or a router. ACL or firewall rules must be updated to allow the following ports:
+In a larger network that spans L2 segments, traffic typically traverses through a firewall and/or a router. ACL or firewall rules must be updated to allow the following ports:
 
 |Name|Port|Flag|Description|
 |----|----|----|-----------|
@@ -129,13 +127,13 @@ For **write-heavy** workloads, the total RAM available for overhead must approxi
 
     RAM NEEDED = number of keys * (average key + value size) * 2-3x
 
-Since writes must be synced to disk (persistent storage) on a quorum of servers before they are committed, deploying a disk with high write throughput (or an SSD) will enhance performance on the write side. ([Documentation](/docs/agent/options.html#\_data\_dir))
+Since writes must be synced to disk (persistent storage) on a quorum of servers before they are committed, deploying a disk with high write throughput (or an SSD) will enhance performance on the write side ([configuration reference](/docs/agent/options.html#\_data\_dir)).
 
 For a **read-heavy** workload, configure all Consul server agents with the `allow_stale` DNS option, or query the API with the `stale` [consistency mode](/api/index.html#consistency-modes). By default, all queries made to the server are RPC forwarded to and serviced by the leader. By enabling stale reads, any server will respond to any query, thereby reducing overhead on the leader. Typically, the stale response is `100ms` or less from consistent mode but it drastically improves performance and reduces latency under high load.
 
-If the leader server is out of memory or the disk is full, the server eventually stops responding, loses its election and cannot move past its last commit time. However, by configuring `max_stale` and setting it to a large value, Consul will continue to respond to queries during such outage scenarios. ([max_stale documentation](/docs/agent/options.html#max_stale)).
+If the leader server is out of memory or the disk is full, the server eventually stops responding, loses its election and cannot move past its last commit time. However, by configuring `max_stale` and setting it to a large value, Consul will continue to respond to queries during such outage scenarios ([max_stale documentation](/docs/agent/options.html#max_stale)).
 
-It should be noted that `stale` is not appropriate for coordination where strong consistency is important (i.e. locking or application leader election). For critical cases, the optional `consistent` API query mode is required for true linearizability; the trade off is that this turns a read into a full quorum write so requires more resources and takes longer.
+It should be noted that `stale` is not appropriate for coordination where strong consistency is important (i.e. locking or application leader election). For critical cases, the optional `consistent` API query mode is required for true linearizability; the trade off is that this turns a read into a full quorum operation so requires more resources and takes longer.
 
 **Read-heavy** clusters may take advantage of the [enhanced reading](/docs/enterprise/read-scale/index.html) feature (Enterprise) for better scalability. This feature allows additional servers to be introduced as non-voters. Being a non-voter, the server will still participate in data replication, but it will not block the leader from committing log entries.
 
@@ -153,7 +151,9 @@ In addition, two [performance indicators](/docs/agent/telemetry.html) &mdash; `c
 
 Creating server backups is an important step in production deployments. Backups provide a mechanism for the server to recover from an outage (network loss, operator error, or a corrupted data directory). All agents write to the `-data-dir` before commit. This directory persists the local agent’s state and &mdash; in the case of servers &mdash; it also holds the Raft information.
 
-Consul provides the [snapshot](/docs/commands/snapshot.html) command which can be run using the CLI command or the API. The `snapshot` command saves the point-in-time snapshot of the state of the Consul servers which includes KV entries, the service catalog, prepared queries, sessions, and ACL.
+The local agent state on client agents is largely an optimization and does not typically need backing up. If this data is lost, any API registrations will need to be replayed and if Connect managed proxy instances were running, they will need to be manually stopped as they will no longer be managed by the agent, other than that a new agent can rejoin the cluster with no issues.
+
+Consul provides the [snapshot](/docs/commands/snapshot.html) command which can be run using the CLI command or the API. The `snapshot` command saves the point-in-time snapshot of the state of the Consul servers which includes all cluster state including but not limited to KV entries, the service catalog, prepared queries, sessions, ACL, Connect CA state, and the Connect intention graph.
 
 With [Consul Enterprise](/docs/commands/snapshot/agent.html), the `snapshot agent` command runs periodically and writes to local or remote storage (such as Amazon S3).
 
